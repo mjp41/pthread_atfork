@@ -1,8 +1,10 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <mutex>
 #include <thread>
+#include <sys/wait.h>
 
 void nop() {}
 
@@ -22,20 +24,24 @@ void postfork_for_m() {
 
 void notify()
 {
+  // Make prefork take a long time to encourage a race
+  // with a call to pthread_atfork
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
 }
 
 int main()
 {
   std::thread([]{
+    // Sleep to ensure the first handler has been registered.
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
     puts("Register handlers for mutex");
     pthread_atfork(prefork_for_m, postfork_for_m, postfork_for_m); // (a)
 
     puts("Thread: acquire lock!");
     m.lock();
 
-    //sleep for 1 second
+    //sleep to allow fork to complete while we are here.
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
     puts("Thread: release lock!");
@@ -46,7 +52,7 @@ int main()
   pthread_atfork(notify, nop, nop); // (b)
 
   puts("Main: fork");
-  fork();
+  pid_t pid = fork();
 
   puts("Main: forked");
 
@@ -59,6 +65,12 @@ int main()
   puts("Main: released mutex");
 
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+  if (pid != 0)
+  {
+    puts("Waiting for child to terminate");
+    wait(nullptr);
+  }
 
   puts("Main: terminates");
   return 0;
